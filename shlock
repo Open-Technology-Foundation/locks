@@ -10,7 +10,7 @@
 #   locks left behind by crashed processes.
 #
 # USAGE:
-#   lock.sh [OPTIONS] LOCKNAME -- COMMAND [ARGS...]
+#   shlock [OPTIONS] LOCKNAME -- COMMAND [ARGS...]
 #
 # ARGUMENTS:
 #   LOCKNAME    Unique identifier for the lock (e.g., 'myapp', 'backup')
@@ -38,16 +38,16 @@
 #
 # EXAMPLES:
 #   # Non-blocking lock (default)
-#   lock.sh backup -- /usr/local/bin/backup.sh
+#   shlock backup -- /usr/local/bin/backup.sh
 #
 #   # Wait indefinitely for lock
-#   lock.sh --wait deployment -- ./deploy.sh production
+#   shlock --wait deployment -- ./deploy.sh production
 #
 #   # Wait up to 30 seconds for lock
-#   lock.sh --wait --timeout 30 sync -- rsync -av /src /dest
+#   shlock --wait --timeout 30 sync -- rsync -av /src /dest
 #
 #   # Custom stale lock threshold
-#   lock.sh --max-age 12 critical -- /path/to/critical.sh
+#   shlock --max-age 12 critical -- /path/to/critical.sh
 #
 # NOTES:
 #   - Lock files persist after command completion for reuse
