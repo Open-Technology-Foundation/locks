@@ -40,7 +40,7 @@ chmod +x /usr/local/bin/shlock
 
 2. Or use directly from the repository:
 ```bash
-/ai/scripts/lib/shlock/shlock [OPTIONS] LOCKNAME -- COMMAND [ARGS...]
+/ai/scripts/lib/shlock/shlock [OPTIONS] [LOCKNAME] -- COMMAND [ARGS...]
 ```
 
 ### Renaming the Script
@@ -67,16 +67,18 @@ The script name is not referenced internally, so renaming has no effect on its o
 ## Usage
 
 ```bash
-shlock [OPTIONS] LOCKNAME -- COMMAND [ARGS...]
+shlock [OPTIONS] [LOCKNAME] -- COMMAND [ARGS...]
 ```
 
 ### Arguments
 
 - **LOCKNAME**: Unique identifier for the lock (e.g., `backup`, `deployment`, `sync`)
+  - **Optional**: If omitted, auto-generated from basename of COMMAND
+  - Example: `shlock -- /usr/local/bin/backup.sh` uses lockname "backup.sh"
 - **COMMAND**: Command to execute while holding the lock
 - **ARGS**: Optional arguments passed to COMMAND
 
-**Important**: The `--` separator is required between options and the lock name.
+**Important**: The `--` separator is required to separate options from the command.
 
 ## Options
 
@@ -86,6 +88,7 @@ shlock [OPTIONS] LOCKNAME -- COMMAND [ARGS...]
 | `--wait` | - | Wait for lock to become available (blocking mode) |
 | `--timeout` | SECONDS | Maximum time to wait for lock (requires `--wait`) |
 | `-h, --help` | - | Display help message |
+| `-V, --version` | - | Display version information |
 
 ## Exit Codes
 
@@ -103,8 +106,11 @@ shlock [OPTIONS] LOCKNAME -- COMMAND [ARGS...]
 Fail immediately if lock is already held:
 
 ```bash
-# Simple lock
+# Explicit lock name
 shlock backup -- /usr/local/bin/backup.sh
+
+# Auto-generated lock name (from command basename)
+shlock -- /usr/local/bin/backup.sh
 
 # Lock with arguments
 shlock sync -- rsync -av /src /dest
@@ -145,8 +151,11 @@ shlock --wait --timeout 10 healthcheck -- curl -f http://localhost/health
 Prevent overlapping executions:
 
 ```bash
-# In crontab
+# In crontab with explicit lock name
 */5 * * * * /usr/local/bin/shlock backup -- /usr/local/bin/backup.sh 2>&1 | logger -t backup
+
+# Using auto-generated lock name
+*/5 * * * * /usr/local/bin/shlock -- /usr/local/bin/backup.sh 2>&1 | logger -t backup
 
 # With timeout for long-running tasks
 0 2 * * * /usr/local/bin/shlock --wait --timeout 3600 nightly-job -- /usr/local/bin/nightly.sh
@@ -199,13 +208,14 @@ fi
 
 ### Locking Mechanism
 
-1. **Lock File Creation**: Creates a lock file at `/run/lock/<LOCKNAME>.lock`
-2. **Stale Lock Check**: If lock file exists, checks if it's older than `--max-age` hours
-3. **Process Validation**: Verifies if the process that created the lock is still running
-4. **Lock Acquisition**: Uses `flock(1)` for atomic, kernel-level locking
-5. **PID Tracking**: Writes the script's PID to `/run/lock/<LOCKNAME>.pid`
-6. **Command Execution**: Runs the specified command while holding the lock
-7. **Cleanup**: Automatically removes PID file on exit; lock file persists for reuse
+1. **LOCKNAME Resolution**: If LOCKNAME is omitted, derives it from the basename of COMMAND
+2. **Lock File Creation**: Creates a lock file at `/run/lock/<LOCKNAME>.lock`
+3. **Stale Lock Check**: If lock file exists, checks if it's older than `--max-age` hours
+4. **Process Validation**: Verifies if the process that created the lock is still running
+5. **Lock Acquisition**: Uses `flock(1)` for atomic, kernel-level locking
+6. **PID Tracking**: Writes the script's PID to `/run/lock/<LOCKNAME>.pid`
+7. **Command Execution**: Runs the specified command while holding the lock
+8. **Cleanup**: Automatically removes PID file on exit; lock file persists for reuse
 
 ### File Locations
 
@@ -246,6 +256,9 @@ If a lock is stale but the process is still running, the lock acquisition fails 
 ```bash
 # In crontab - runs every 5 minutes but skips if previous run is still active
 */5 * * * * shlock sync -- /usr/local/bin/sync-data.sh
+
+# Or use auto-generated lock name
+*/5 * * * * shlock -- /usr/local/bin/sync-data.sh
 ```
 
 ### 2. Serialize Database Operations
@@ -362,10 +375,14 @@ date
 ### 1. Choose Meaningful Lock Names
 
 ```bash
-# Good
+# Good - explicit lock names
 shlock database-backup -- ...
 shlock customer-data-sync -- ...
 shlock nightly-reports -- ...
+
+# Also good - auto-generated from descriptive script names
+shlock -- /usr/local/bin/database-backup.sh
+shlock -- /usr/local/bin/customer-data-sync.sh
 
 # Avoid
 shlock lock1 -- ...
@@ -550,6 +567,6 @@ This utility is part of the Okusi Group bash scripting standard library.
 
 ---
 
-**Version**: 2.0
+**Version**: 1.0.0
 **Last Updated**: 2025-10-23
 **Maintainer**: Gary Dean (Biksu Okusi)

@@ -84,7 +84,7 @@ assert_exit_code "Only lockname without separator returns exit code 2" 2 \
 assert_exit_code "Lockname and separator but no command returns exit code 2" 2 \
   "$LOCK_SCRIPT" test_error_4 --
 
-assert_exit_code "Empty lockname returns exit code 2" 2 \
+assert_exit_code "Empty lockname auto-generates from command" 0 \
   "$LOCK_SCRIPT" "" -- echo "test"
 
 echo
@@ -130,7 +130,7 @@ assert_contains "Lock held error mentions lock name" "test_error_12" \
   "$LOCK_SCRIPT" test_error_12 -- echo "test"
 wait "$HOLDER_PID" || true
 
-assert_contains "Missing lockname error is clear" "required" \
+assert_exit_code "Auto-generated lockname succeeds" 0 \
   "$LOCK_SCRIPT" -- echo "test"
 
 assert_contains "Missing command error is clear" "COMMAND" \

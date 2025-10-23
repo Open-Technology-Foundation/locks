@@ -119,7 +119,7 @@ assert_exit_code "Help with --help" 0 \
 
 echo
 echo "Test: Invalid arguments"
-assert_exit_code "Missing lockname" 2 \
+assert_exit_code "Auto-generated lockname from command" 0 \
   "$LOCK_SCRIPT" -- echo "test"
 assert_exit_code "Missing command" 2 \
   "$LOCK_SCRIPT" test_basic_7 --
