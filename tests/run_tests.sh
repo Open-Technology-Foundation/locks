@@ -1,5 +1,5 @@
 #!/bin/bash
-# Test runner for lock.sh test suite
+# Test runner for shlock test suite
 #
 # Runs all test files and reports results
 
@@ -13,7 +13,7 @@ readonly -- SCRIPT_NAME
 # Directories
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 readonly -- SCRIPT_DIR
-readonly -- LOCK_SCRIPT="$SCRIPT_DIR/../lock.sh"
+readonly -- LOCK_SCRIPT="$SCRIPT_DIR/../shlock"
 
 # Test state
 declare -i TESTS_RUN=0
@@ -33,9 +33,9 @@ error() { echo -e "${COLOR_RED}✗${COLOR_RESET} $*"; }
 warn() { echo -e "${COLOR_YELLOW}▲${COLOR_RESET} $*"; }
 success() { echo -e "${COLOR_GREEN}✓${COLOR_RESET} $*"; }
 
-# Verify lock.sh exists
+# Verify shlock exists
 if [[ ! -x "$LOCK_SCRIPT" ]]; then
-  error "lock.sh not found or not executable at: $LOCK_SCRIPT"
+  error "shlock not found or not executable at: $LOCK_SCRIPT"
   exit 1
 fi
 

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Basic functionality tests for lock.sh
+# Basic functionality tests for shlock
 
 set -euo pipefail
 shopt -s inherit_errexit
@@ -7,7 +7,7 @@ shopt -s inherit_errexit
 # Setup
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 readonly -- SCRIPT_DIR
-readonly -- LOCK_SCRIPT="$SCRIPT_DIR/../lock.sh"
+readonly -- LOCK_SCRIPT="$SCRIPT_DIR/../shlock"
 readonly -- TEST_LOCK_DIR="/tmp/lock_tests_$$"
 declare -i TEST_COUNT=0
 declare -i TEST_PASSED=0

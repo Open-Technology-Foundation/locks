@@ -1,5 +1,5 @@
 #!/bin/bash
-# Error handling and edge case tests for lock.sh
+# Error handling and edge case tests for shlock
 
 set -euo pipefail
 shopt -s inherit_errexit
@@ -7,7 +7,7 @@ shopt -s inherit_errexit
 # Setup
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 readonly -- SCRIPT_DIR
-readonly -- LOCK_SCRIPT="$SCRIPT_DIR/../lock.sh"
+readonly -- LOCK_SCRIPT="$SCRIPT_DIR/../shlock"
 declare -i TEST_COUNT=0
 declare -i TEST_PASSED=0
 

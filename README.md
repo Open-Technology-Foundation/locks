@@ -1,4 +1,4 @@
-# lock.sh - File-based Locking System
+# shlock - File-based Locking System
 
 A robust, production-ready file-based locking utility using `flock(1)` for safe concurrent script execution with stale lock detection and flexible waiting modes.
 
@@ -32,16 +32,31 @@ A robust, production-ready file-based locking utility using `flock(1)` for safe 
 
 ## Installation
 
-1. Copy `lock.sh` to your desired location:
+1. Copy `shlock` to your desired location:
 ```bash
-cp lock.sh /usr/local/bin/
-chmod +x /usr/local/bin/lock.sh
+cp shlock /usr/local/bin/
+chmod +x /usr/local/bin/shlock
 ```
 
 2. Or use directly from the repository:
 ```bash
-/ai/scripts/lib/locks/lock.sh [OPTIONS] LOCKNAME -- COMMAND [ARGS...]
+/ai/scripts/lib/shlock/shlock [OPTIONS] LOCKNAME -- COMMAND [ARGS...]
 ```
+
+### Renaming the Script
+
+You can rename the script to any name you prefer without affecting functionality. This is useful to avoid name conflicts with other programs:
+
+```bash
+# Rename to avoid conflicts
+mv shlock sherlock
+chmod +x sherlock
+
+# Use with new name
+sherlock backup -- /usr/local/bin/backup.sh
+```
+
+The script name is not referenced internally, so renaming has no effect on its operation.
 
 ### Requirements
 
@@ -52,7 +67,7 @@ chmod +x /usr/local/bin/lock.sh
 ## Usage
 
 ```bash
-lock.sh [OPTIONS] LOCKNAME -- COMMAND [ARGS...]
+shlock [OPTIONS] LOCKNAME -- COMMAND [ARGS...]
 ```
 
 ### Arguments
@@ -89,13 +104,13 @@ Fail immediately if lock is already held:
 
 ```bash
 # Simple lock
-lock.sh backup -- /usr/local/bin/backup.sh
+shlock backup -- /usr/local/bin/backup.sh
 
 # Lock with arguments
-lock.sh sync -- rsync -av /src /dest
+shlock sync -- rsync -av /src /dest
 
 # Lock with custom stale threshold
-lock.sh --max-age 12 critical -- /path/to/critical.sh
+shlock --max-age 12 critical -- /path/to/critical.sh
 ```
 
 ### Blocking Mode (Wait Indefinitely)
@@ -104,10 +119,10 @@ Wait until the lock becomes available:
 
 ```bash
 # Wait for deployment lock
-lock.sh --wait deployment -- ./deploy.sh production
+shlock --wait deployment -- ./deploy.sh production
 
 # Wait with custom stale threshold
-lock.sh --max-age 6 --wait database-backup -- /usr/local/bin/db-backup.sh
+shlock --max-age 6 --wait database-backup -- /usr/local/bin/db-backup.sh
 ```
 
 ### Timeout Mode
@@ -116,13 +131,13 @@ Wait up to a specified time:
 
 ```bash
 # Wait up to 30 seconds
-lock.sh --wait --timeout 30 sync -- rsync -av /src /dest
+shlock --wait --timeout 30 sync -- rsync -av /src /dest
 
 # Wait up to 5 minutes (300 seconds)
-lock.sh --wait --timeout 300 report -- /usr/local/bin/generate-report.sh
+shlock --wait --timeout 300 report -- /usr/local/bin/generate-report.sh
 
 # Critical task with short timeout
-lock.sh --wait --timeout 10 healthcheck -- curl -f http://localhost/health
+shlock --wait --timeout 10 healthcheck -- curl -f http://localhost/health
 ```
 
 ### Cron Job Usage
@@ -131,17 +146,17 @@ Prevent overlapping executions:
 
 ```bash
 # In crontab
-*/5 * * * * /usr/local/bin/lock.sh backup -- /usr/local/bin/backup.sh 2>&1 | logger -t backup
+*/5 * * * * /usr/local/bin/shlock backup -- /usr/local/bin/backup.sh 2>&1 | logger -t backup
 
 # With timeout for long-running tasks
-0 2 * * * /usr/local/bin/lock.sh --wait --timeout 3600 nightly-job -- /usr/local/bin/nightly.sh
+0 2 * * * /usr/local/bin/shlock --wait --timeout 3600 nightly-job -- /usr/local/bin/nightly.sh
 ```
 
 ### Systemd Service
 
 ```bash
 # In your script or ExecStart
-ExecStart=/usr/local/bin/lock.sh --wait service-name -- /usr/local/bin/your-service
+ExecStart=/usr/local/bin/shlock --wait service-name -- /usr/local/bin/your-service
 ```
 
 ### CI/CD Pipeline
@@ -150,7 +165,7 @@ ExecStart=/usr/local/bin/lock.sh --wait service-name -- /usr/local/bin/your-serv
 #!/bin/bash
 # Ensure only one deployment runs at a time
 
-if ! lock.sh --timeout 60 deploy-prod -- ./deploy.sh production; then
+if ! shlock --timeout 60 deploy-prod -- ./deploy.sh production; then
     echo "Deployment already in progress or timed out"
     exit 1
 fi
@@ -161,7 +176,7 @@ fi
 ```bash
 #!/bin/bash
 
-if lock.sh database-maintenance -- /usr/local/bin/maintenance.sh; then
+if shlock database-maintenance -- /usr/local/bin/maintenance.sh; then
     echo "Maintenance completed successfully"
 else
     exit_code=$?
@@ -230,37 +245,37 @@ If a lock is stale but the process is still running, the lock acquisition fails 
 
 ```bash
 # In crontab - runs every 5 minutes but skips if previous run is still active
-*/5 * * * * lock.sh sync -- /usr/local/bin/sync-data.sh
+*/5 * * * * shlock sync -- /usr/local/bin/sync-data.sh
 ```
 
 ### 2. Serialize Database Operations
 
 ```bash
 # Multiple scripts accessing the same database
-lock.sh --wait database -- /usr/local/bin/db-operation-1.sh
-lock.sh --wait database -- /usr/local/bin/db-operation-2.sh
+shlock --wait database -- /usr/local/bin/db-operation-1.sh
+shlock --wait database -- /usr/local/bin/db-operation-2.sh
 ```
 
 ### 3. Safe Deployment Pipeline
 
 ```bash
 # Ensure only one deployment runs at a time
-lock.sh --timeout 300 deployment -- ./deploy.sh "$ENVIRONMENT"
+shlock --timeout 300 deployment -- ./deploy.sh "$ENVIRONMENT"
 ```
 
 ### 4. Resource-Intensive Tasks
 
 ```bash
 # Prevent multiple instances of CPU/IO-heavy operations
-lock.sh backup -- /usr/local/bin/full-backup.sh
-lock.sh indexing -- /usr/local/bin/rebuild-search-index.sh
+shlock backup -- /usr/local/bin/full-backup.sh
+shlock indexing -- /usr/local/bin/rebuild-search-index.sh
 ```
 
 ### 5. Graceful Service Restarts
 
 ```bash
 # Prevent multiple restart attempts
-lock.sh --wait --timeout 30 service-restart -- systemctl restart myservice
+shlock --wait --timeout 30 service-restart -- systemctl restart myservice
 ```
 
 ## Testing
@@ -271,7 +286,7 @@ The utility includes a comprehensive test suite with 103 test cases covering all
 
 ```bash
 # Run all tests
-cd /ai/scripts/lib/locks/tests
+cd /ai/scripts/lib/shlock/tests
 ./run_tests.sh
 
 # Run specific test file
@@ -348,42 +363,42 @@ date
 
 ```bash
 # Good
-lock.sh database-backup -- ...
-lock.sh customer-data-sync -- ...
-lock.sh nightly-reports -- ...
+shlock database-backup -- ...
+shlock customer-data-sync -- ...
+shlock nightly-reports -- ...
 
 # Avoid
-lock.sh lock1 -- ...
-lock.sh temp -- ...
+shlock lock1 -- ...
+shlock temp -- ...
 ```
 
 ### 2. Set Appropriate max-age Values
 
 ```bash
 # Short-running tasks (< 1 hour)
-lock.sh --max-age 2 quick-sync -- ...
+shlock --max-age 2 quick-sync -- ...
 
 # Medium tasks (few hours)
-lock.sh --max-age 12 backup -- ...
+shlock --max-age 12 backup -- ...
 
 # Long-running tasks (overnight)
-lock.sh --max-age 48 monthly-report -- ...
+shlock --max-age 48 monthly-report -- ...
 ```
 
 ### 3. Use Timeout for Critical Paths
 
 ```bash
 # Don't let deployments wait forever
-lock.sh --wait --timeout 300 deployment -- ./deploy.sh
+shlock --wait --timeout 300 deployment -- ./deploy.sh
 
 # Quick healthchecks should timeout fast
-lock.sh --wait --timeout 5 healthcheck -- ./check-health.sh
+shlock --wait --timeout 5 healthcheck -- ./check-health.sh
 ```
 
 ### 4. Handle Exit Codes Properly
 
 ```bash
-if ! lock.sh backup -- /usr/local/bin/backup.sh; then
+if ! shlock backup -- /usr/local/bin/backup.sh; then
     # Alert, log, or take corrective action
     echo "Backup failed or locked" | mail -s "Backup Alert" admin@example.com
 fi
@@ -393,10 +408,10 @@ fi
 
 ```bash
 # In cron
-* * * * * lock.sh task -- /path/to/script.sh 2>&1 | logger -t task-lock
+* * * * * shlock task -- /path/to/script.sh 2>&1 | logger -t task-lock
 
 # In scripts
-lock.sh task -- /path/to/script.sh 2>&1 | tee -a /var/log/task.log
+shlock task -- /path/to/script.sh 2>&1 | tee -a /var/log/task.log
 ```
 
 ### 6. Combine with Monitoring
@@ -436,11 +451,11 @@ fi
 ```bash
 #!/bin/bash
 # Outer operation
-lock.sh operation-a -- bash -c '
+shlock operation-a -- bash -c '
     echo "Running operation A"
 
     # Inner operation with different lock
-    lock.sh operation-b -- echo "Running operation B"
+    shlock operation-b -- echo "Running operation B"
 '
 ```
 
@@ -454,7 +469,7 @@ if [[ "$FORCE" == "yes" ]]; then
     /usr/local/bin/task.sh
 else
     # Normal locked execution
-    lock.sh task -- /usr/local/bin/task.sh
+    shlock task -- /usr/local/bin/task.sh
 fi
 ```
 
@@ -467,7 +482,7 @@ After=network.target
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/bin/lock.sh --wait my-service -- /usr/local/bin/my-service.sh
+ExecStart=/usr/local/bin/shlock --wait my-service -- /usr/local/bin/my-service.sh
 StandardOutput=journal
 StandardError=journal
 
@@ -511,7 +526,7 @@ A: The script will fail. You can modify `LOCK_DIR` in the script to use an alter
 A: Yes, but note that locks are container-scoped. Different containers don't share locks unless they share the same `/run/lock` volume.
 
 **Q: Can I use this with non-Bash scripts?**
-A: Yes, you can lock any executable: `lock.sh task -- python3 script.py` or `lock.sh task -- /usr/bin/my-binary`
+A: Yes, you can lock any executable: `shlock task -- python3 script.py` or `shlock task -- /usr/bin/my-binary`
 
 **Q: How many locks can I have?**
 A: Practically unlimited. Each lock is just two small files in `/run/lock`.
@@ -520,7 +535,7 @@ A: Practically unlimited. Each lock is just two small files in `/run/lock`.
 
 Contributions are welcome! Please ensure:
 - All tests pass: `./tests/run_tests.sh`
-- Shellcheck compliance: `shellcheck lock.sh`
+- Shellcheck compliance: `shellcheck shlock`
 - Documentation updates for new features
 
 ## License
