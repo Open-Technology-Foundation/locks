@@ -1,0 +1,273 @@
+#!/bin/bash
+# shellcheck disable=SC2317  # Unreachable code warnings for cleanup() and show_usage() - called via trap and die
+#
+# lock.sh - File-based locking system with stale lock detection
+#
+# DESCRIPTION:
+#   Provides exclusive file-based locking using flock(1) for safe concurrent
+#   script execution. Prevents multiple instances of the same operation from
+#   running simultaneously and includes stale lock detection for cleanup of
+#   locks left behind by crashed processes.
+#
+# USAGE:
+#   lock.sh [OPTIONS] LOCKNAME -- COMMAND [ARGS...]
+#
+# ARGUMENTS:
+#   LOCKNAME    Unique identifier for the lock (e.g., 'myapp', 'backup')
+#   COMMAND     Command to execute while holding the lock
+#   ARGS        Optional arguments passed to COMMAND
+#
+# OPTIONS:
+#   --max-age HOURS     Maximum lock age before considered stale (default: 24)
+#   --wait              Wait for lock to become available (blocking mode)
+#   --timeout SECONDS   Maximum time to wait for lock (requires --wait)
+#   -h, --help          Display this help message
+#
+# LOCKING MECHANISM:
+#   - Uses flock(1) on /run/lock/<LOCKNAME>.lock for exclusive locking
+#   - PID file at /run/lock/<LOCKNAME>.pid tracks lock holder
+#   - Non-blocking by default (fails immediately if lock is held)
+#   - With --wait: blocks until lock is available or timeout expires
+#   - Stale lock detection: removes locks older than max-age with dead processes
+#
+# EXIT CODES:
+#   0 - Command executed successfully
+#   1 - Lock acquisition failed (held by another process or timeout)
+#   2 - Invalid arguments
+#   3 - Command failed
+#
+# EXAMPLES:
+#   # Non-blocking lock (default)
+#   lock.sh backup -- /usr/local/bin/backup.sh
+#
+#   # Wait indefinitely for lock
+#   lock.sh --wait deployment -- ./deploy.sh production
+#
+#   # Wait up to 30 seconds for lock
+#   lock.sh --wait --timeout 30 sync -- rsync -av /src /dest
+#
+#   # Custom stale lock threshold
+#   lock.sh --max-age 12 critical -- /path/to/critical.sh
+#
+# NOTES:
+#   - Lock files persist after command completion for reuse
+#   - PID files are cleaned up on exit
+#   - flock is released when the script exits (normal or signal)
+#   - Safe for use in cron jobs and automated scripts
+
+set -euo pipefail
+shopt -s inherit_errexit shift_verbose
+
+# Script metadata
+SCRIPT_NAME=${0##*/}
+readonly -- SCRIPT_NAME
+
+# Global variables
+declare -- LOCKNAME=''
+declare -- LOCKFILE=''
+declare -- PIDFILE=''
+declare -i MAX_AGE_HOURS=24
+declare -- WAIT_MODE='no'
+declare -i TIMEOUT_SECONDS=0
+readonly -- LOCK_DIR=/run/lock
+
+# Messaging functions
+error() { >&2 echo "$SCRIPT_NAME: error: $*"; }
+
+die() {
+  (($#>1)) && error "${@:2}"
+  exit "${1:-1}"
+}
+
+# Helper functions
+is_process_running() {
+  local -i pid=$1
+  kill -0 "$pid" 2>/dev/null
+}
+
+is_lock_stale() {
+  local -- lockfile=$1
+  local -i max_age_seconds=$((MAX_AGE_HOURS * 3600))
+
+  [[ -f "$lockfile" ]] || return 1  # Not stale if doesn't exist
+
+  local -i lock_age=$(($(date +%s) - $(stat -c %Y "$lockfile" 2>/dev/null || echo 0)))
+
+  ((lock_age > max_age_seconds))
+}
+
+clean_stale_lock() {
+  >&2 echo "$SCRIPT_NAME: Lock is older than ${MAX_AGE_HOURS} hours, removing stale lock..."
+  rm -f "$LOCKFILE" "$PIDFILE" 2>/dev/null || true
+}
+
+cleanup() {
+  rm -f "$PIDFILE" 2>/dev/null || true
+  # flock is released when fd 200 closes; lock file persists for reuse
+}
+
+# Validation functions
+show_usage() {
+  cat >&2 <<EOF
+Usage: $SCRIPT_NAME [OPTIONS] LOCKNAME -- COMMAND [ARGS...]
+
+File-based locking system with stale lock detection.
+
+Options:
+  --max-age HOURS      Maximum lock age in hours (default: 24)
+  --wait               Wait for lock to become available (blocking mode)
+  --timeout SECONDS    Maximum time to wait for lock (requires --wait)
+  -h, --help           Display this help message
+
+Exit codes:
+  0   - Command executed successfully
+  1   - Lock acquisition failed (lock held by another process or timeout)
+  2   - Invalid arguments
+  3   - Command failed
+
+Examples:
+  # Non-blocking (default)
+  $SCRIPT_NAME backup -- /usr/local/bin/backup.sh
+
+  # Wait indefinitely for lock
+  $SCRIPT_NAME --wait deployment -- ./deploy.sh
+
+  # Wait up to 30 seconds
+  $SCRIPT_NAME --wait --timeout 30 sync -- rsync -av /src /dest
+
+  # Custom stale lock threshold
+  $SCRIPT_NAME --max-age 12 critical -- /path/to/critical.sh
+EOF
+}
+
+# Main function
+main() {
+  # Parse options
+  while (($#)); do
+    case "$1" in
+      -h|--help)
+        show_usage; exit 0;
+        ;;
+      --max-age)
+        if [[ -z "${2:-}" ]] || [[ ! "$2" =~ ^[0-9]+$ ]]; then
+          die 2 '--max-age requires a numeric argument'
+        fi
+        MAX_AGE_HOURS=$2
+        shift 2
+        ;;
+      --wait)
+        WAIT_MODE='yes'
+        shift
+        ;;
+      --timeout)
+        if [[ -z "${2:-}" ]] || [[ ! "$2" =~ ^[0-9]+$ ]]; then
+          die 2 '--timeout requires a numeric argument'
+        fi
+        TIMEOUT_SECONDS=$2
+        shift 2
+        ;;
+      --)
+        shift
+        break
+        ;;
+      -*)
+        die 2 "Unknown option: $1"
+        ;;
+      *)
+        # First non-option argument is the lock name
+        LOCKNAME=$1
+        shift
+        # Next should be --
+        if [[ "${1:-}" != '--' ]]; then
+          die 2 'Expected -- after LOCKNAME'
+        fi
+        shift
+        break
+        ;;
+    esac
+  done
+
+  # Validate arguments
+  [[ -n "$LOCKNAME" ]] || die 2 'LOCKNAME is required'
+
+  (($#)) || die 2 'COMMAND is required'
+
+  # Validate timeout option
+  if ((TIMEOUT_SECONDS > 0)) && [[ "$WAIT_MODE" != 'yes' ]]; then
+    die 2 '--timeout requires --wait'
+  fi
+
+  # Setup lock file paths
+  LOCKFILE="$LOCK_DIR/$LOCKNAME.lock"
+  PIDFILE="$LOCK_DIR/$LOCKNAME.pid"
+
+  # Check if lock file exists and is stale
+  if [[ -f "$LOCKFILE" ]]; then
+    if is_lock_stale "$LOCKFILE"; then
+      # Check if the process that created the lock is still running
+      if [[ -f "$PIDFILE" ]]; then
+        local -- old_pid
+        old_pid=$(cat "$PIDFILE" 2>/dev/null || echo '')
+        if [[ -n "$old_pid" ]] && is_process_running "$old_pid"; then
+          error "Lock is stale but process $old_pid is still running"
+          die 1 "Lock held by PID $old_pid (running for ${MAX_AGE_HOURS}+ hours)"
+        fi
+      fi
+      clean_stale_lock
+    fi
+  fi
+
+  # Try to acquire lock using flock
+  # Open file descriptor 200 for the lock file
+  exec 200>"$LOCKFILE"
+
+  # Determine flock options based on wait mode
+  local -a flock_opts=()
+  if [[ "$WAIT_MODE" == 'yes' ]]; then
+    # Blocking mode
+    if ((TIMEOUT_SECONDS > 0)); then
+      flock_opts=(-w "$TIMEOUT_SECONDS")
+    fi
+    # else: wait indefinitely (no options needed)
+  else
+    # Non-blocking mode (default)
+    flock_opts=(-n)
+  fi
+
+  # Attempt to acquire the lock
+  if ! flock "${flock_opts[@]}" 200; then
+    # Lock acquisition failed
+    if [[ "$WAIT_MODE" == 'yes' ]] && ((TIMEOUT_SECONDS > 0)); then
+      die 1 "Timeout after ${TIMEOUT_SECONDS} seconds waiting for lock '$LOCKNAME'"
+    else
+      if [[ -f "$PIDFILE" ]]; then
+        local -- holder_pid
+        holder_pid=$(cat "$PIDFILE" 2>/dev/null || echo 'unknown')
+        die 1 "Lock '$LOCKNAME' is currently held by PID $holder_pid"
+      else
+        die 1 "Lock '$LOCKNAME' is currently held"
+      fi
+    fi
+  fi
+
+  # Lock acquired - write our PID
+  echo $$ > "$PIDFILE"
+
+  # Setup cleanup trap
+  trap cleanup EXIT
+
+  # Execute the command
+  local -i exit_code=0
+  set +e
+  "$@"
+  exit_code=$?
+  set -e
+
+  ((exit_code==0)) || die 3 "Command failed with exit code $exit_code"
+
+  exit 0
+}
+
+main "$@"
+
+#fin

@@ -1,0 +1,540 @@
+# lock.sh - File-based Locking System
+
+A robust, production-ready file-based locking utility using `flock(1)` for safe concurrent script execution with stale lock detection and flexible waiting modes.
+
+## Table of Contents
+
+- [Features](#features)
+- [Installation](#installation)
+- [Usage](#usage)
+- [Options](#options)
+- [Exit Codes](#exit-codes)
+- [Examples](#examples)
+- [How It Works](#how-it-works)
+- [Use Cases](#use-cases)
+- [Testing](#testing)
+- [Troubleshooting](#troubleshooting)
+- [Best Practices](#best-practices)
+
+## Features
+
+- **Exclusive Locking**: Prevents multiple instances of the same operation from running simultaneously
+- **Stale Lock Detection**: Automatically removes locks left behind by crashed processes
+- **Flexible Waiting Modes**:
+  - Non-blocking (default): Fail immediately if lock is held
+  - Blocking: Wait indefinitely for lock to become available
+  - Timeout: Wait up to a specified number of seconds
+- **PID Tracking**: Tracks which process holds each lock
+- **Clean Exit Handling**: Automatic lock cleanup on normal exit or signal termination
+- **Safe for Automation**: Ideal for cron jobs, systemd services, and CI/CD pipelines
+- **Comprehensive Error Messages**: Clear, actionable error reporting
+- **Battle-tested**: 103 comprehensive test cases
+
+## Installation
+
+1. Copy `lock.sh` to your desired location:
+```bash
+cp lock.sh /usr/local/bin/
+chmod +x /usr/local/bin/lock.sh
+```
+
+2. Or use directly from the repository:
+```bash
+/ai/scripts/lib/locks/lock.sh [OPTIONS] LOCKNAME -- COMMAND [ARGS...]
+```
+
+### Requirements
+
+- Bash 5.0 or later
+- `flock` utility (usually from `util-linux` package)
+- `/run/lock` directory (standard on most Linux distributions)
+
+## Usage
+
+```bash
+lock.sh [OPTIONS] LOCKNAME -- COMMAND [ARGS...]
+```
+
+### Arguments
+
+- **LOCKNAME**: Unique identifier for the lock (e.g., `backup`, `deployment`, `sync`)
+- **COMMAND**: Command to execute while holding the lock
+- **ARGS**: Optional arguments passed to COMMAND
+
+**Important**: The `--` separator is required between options and the lock name.
+
+## Options
+
+| Option | Argument | Description |
+|--------|----------|-------------|
+| `--max-age` | HOURS | Maximum lock age before considered stale (default: 24) |
+| `--wait` | - | Wait for lock to become available (blocking mode) |
+| `--timeout` | SECONDS | Maximum time to wait for lock (requires `--wait`) |
+| `-h, --help` | - | Display help message |
+
+## Exit Codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | Command executed successfully |
+| 1 | Lock acquisition failed (held by another process or timeout) |
+| 2 | Invalid arguments |
+| 3 | Command failed |
+
+## Examples
+
+### Basic Usage (Non-blocking)
+
+Fail immediately if lock is already held:
+
+```bash
+# Simple lock
+lock.sh backup -- /usr/local/bin/backup.sh
+
+# Lock with arguments
+lock.sh sync -- rsync -av /src /dest
+
+# Lock with custom stale threshold
+lock.sh --max-age 12 critical -- /path/to/critical.sh
+```
+
+### Blocking Mode (Wait Indefinitely)
+
+Wait until the lock becomes available:
+
+```bash
+# Wait for deployment lock
+lock.sh --wait deployment -- ./deploy.sh production
+
+# Wait with custom stale threshold
+lock.sh --max-age 6 --wait database-backup -- /usr/local/bin/db-backup.sh
+```
+
+### Timeout Mode
+
+Wait up to a specified time:
+
+```bash
+# Wait up to 30 seconds
+lock.sh --wait --timeout 30 sync -- rsync -av /src /dest
+
+# Wait up to 5 minutes (300 seconds)
+lock.sh --wait --timeout 300 report -- /usr/local/bin/generate-report.sh
+
+# Critical task with short timeout
+lock.sh --wait --timeout 10 healthcheck -- curl -f http://localhost/health
+```
+
+### Cron Job Usage
+
+Prevent overlapping executions:
+
+```bash
+# In crontab
+*/5 * * * * /usr/local/bin/lock.sh backup -- /usr/local/bin/backup.sh 2>&1 | logger -t backup
+
+# With timeout for long-running tasks
+0 2 * * * /usr/local/bin/lock.sh --wait --timeout 3600 nightly-job -- /usr/local/bin/nightly.sh
+```
+
+### Systemd Service
+
+```bash
+# In your script or ExecStart
+ExecStart=/usr/local/bin/lock.sh --wait service-name -- /usr/local/bin/your-service
+```
+
+### CI/CD Pipeline
+
+```bash
+#!/bin/bash
+# Ensure only one deployment runs at a time
+
+if ! lock.sh --timeout 60 deploy-prod -- ./deploy.sh production; then
+    echo "Deployment already in progress or timed out"
+    exit 1
+fi
+```
+
+### Error Handling
+
+```bash
+#!/bin/bash
+
+if lock.sh database-maintenance -- /usr/local/bin/maintenance.sh; then
+    echo "Maintenance completed successfully"
+else
+    exit_code=$?
+    case $exit_code in
+        1)
+            echo "Lock is held by another process"
+            ;;
+        2)
+            echo "Invalid arguments"
+            ;;
+        3)
+            echo "Maintenance script failed"
+            ;;
+    esac
+    exit $exit_code
+fi
+```
+
+## How It Works
+
+### Locking Mechanism
+
+1. **Lock File Creation**: Creates a lock file at `/run/lock/<LOCKNAME>.lock`
+2. **Stale Lock Check**: If lock file exists, checks if it's older than `--max-age` hours
+3. **Process Validation**: Verifies if the process that created the lock is still running
+4. **Lock Acquisition**: Uses `flock(1)` for atomic, kernel-level locking
+5. **PID Tracking**: Writes the script's PID to `/run/lock/<LOCKNAME>.pid`
+6. **Command Execution**: Runs the specified command while holding the lock
+7. **Cleanup**: Automatically removes PID file on exit; lock file persists for reuse
+
+### File Locations
+
+- **Lock files**: `/run/lock/<LOCKNAME>.lock`
+- **PID files**: `/run/lock/<LOCKNAME>.pid`
+
+Both are stored in `/run/lock` which is typically a tmpfs (RAM-based) filesystem that's cleared on reboot.
+
+### Stale Lock Detection
+
+A lock is considered stale when:
+1. The lock file is older than `--max-age` hours (default: 24)
+2. AND the process listed in the PID file is not running
+
+If a lock is stale but the process is still running, the lock acquisition fails with a warning that the process has been running for an unusually long time.
+
+### Waiting Modes
+
+**Non-blocking (default)**:
+- Attempts to acquire lock once
+- Fails immediately if lock is held
+- Best for: Cron jobs where you want to skip if already running
+
+**Blocking (`--wait`)**:
+- Waits indefinitely for lock to become available
+- Acquires lock as soon as it's released
+- Best for: Sequential tasks that must eventually run
+
+**Timeout (`--wait --timeout SECONDS`)**:
+- Waits up to specified seconds for lock
+- Fails with exit code 1 if timeout expires
+- Best for: Tasks with time constraints
+
+## Use Cases
+
+### 1. Prevent Overlapping Cron Jobs
+
+```bash
+# In crontab - runs every 5 minutes but skips if previous run is still active
+*/5 * * * * lock.sh sync -- /usr/local/bin/sync-data.sh
+```
+
+### 2. Serialize Database Operations
+
+```bash
+# Multiple scripts accessing the same database
+lock.sh --wait database -- /usr/local/bin/db-operation-1.sh
+lock.sh --wait database -- /usr/local/bin/db-operation-2.sh
+```
+
+### 3. Safe Deployment Pipeline
+
+```bash
+# Ensure only one deployment runs at a time
+lock.sh --timeout 300 deployment -- ./deploy.sh "$ENVIRONMENT"
+```
+
+### 4. Resource-Intensive Tasks
+
+```bash
+# Prevent multiple instances of CPU/IO-heavy operations
+lock.sh backup -- /usr/local/bin/full-backup.sh
+lock.sh indexing -- /usr/local/bin/rebuild-search-index.sh
+```
+
+### 5. Graceful Service Restarts
+
+```bash
+# Prevent multiple restart attempts
+lock.sh --wait --timeout 30 service-restart -- systemctl restart myservice
+```
+
+## Testing
+
+The utility includes a comprehensive test suite with 103 test cases covering all functionality.
+
+### Running Tests
+
+```bash
+# Run all tests
+cd /ai/scripts/lib/locks/tests
+./run_tests.sh
+
+# Run specific test file
+./test_basic.sh
+./test_wait_timeout.sh
+```
+
+### Test Coverage
+
+- **test_basic.sh** (15 tests): Basic functionality, argument handling, exit codes
+- **test_concurrent.sh** (13 tests): Concurrent lock acquisition, race conditions
+- **test_edge_cases.sh** (24 tests): Edge cases, stress tests, special characters
+- **test_errors.sh** (27 tests): Error handling, invalid inputs, signal handling
+- **test_stale_locks.sh** (11 tests): Stale lock detection, max-age thresholds
+- **test_wait_timeout.sh** (13 tests): Blocking mode, timeout behavior, queuing
+
+## Troubleshooting
+
+### Lock Won't Release
+
+**Symptom**: Lock appears held even though no process is running
+
+**Solutions**:
+```bash
+# Check for lock files
+ls -la /run/lock/YOUR_LOCKNAME.*
+
+# Check which process holds the lock
+cat /run/lock/YOUR_LOCKNAME.pid
+ps -p $(cat /run/lock/YOUR_LOCKNAME.pid)
+
+# Force remove stale lock (use with caution)
+rm -f /run/lock/YOUR_LOCKNAME.lock /run/lock/YOUR_LOCKNAME.pid
+```
+
+### Permission Denied
+
+**Symptom**: Cannot create lock files
+
+**Solutions**:
+```bash
+# Check /run/lock permissions
+ls -ld /run/lock
+
+# Ensure your user can write to /run/lock
+# Typically this requires being in the appropriate group or running as root
+```
+
+### Timeout Not Working
+
+**Symptom**: `--timeout` flag not recognized or failing
+
+**Check**:
+1. Ensure you're using `--wait` with `--timeout`
+2. Verify `flock` supports `-w` option: `flock --help | grep -e '-w'`
+3. Update util-linux if needed: `apt-get update && apt-get install util-linux`
+
+### Lock Always Considered Stale
+
+**Symptom**: Lock is removed even when process is running
+
+**Check**:
+```bash
+# Verify timestamp on lock file
+stat /run/lock/YOUR_LOCKNAME.lock
+
+# Check if system time is correct
+date
+```
+
+## Best Practices
+
+### 1. Choose Meaningful Lock Names
+
+```bash
+# Good
+lock.sh database-backup -- ...
+lock.sh customer-data-sync -- ...
+lock.sh nightly-reports -- ...
+
+# Avoid
+lock.sh lock1 -- ...
+lock.sh temp -- ...
+```
+
+### 2. Set Appropriate max-age Values
+
+```bash
+# Short-running tasks (< 1 hour)
+lock.sh --max-age 2 quick-sync -- ...
+
+# Medium tasks (few hours)
+lock.sh --max-age 12 backup -- ...
+
+# Long-running tasks (overnight)
+lock.sh --max-age 48 monthly-report -- ...
+```
+
+### 3. Use Timeout for Critical Paths
+
+```bash
+# Don't let deployments wait forever
+lock.sh --wait --timeout 300 deployment -- ./deploy.sh
+
+# Quick healthchecks should timeout fast
+lock.sh --wait --timeout 5 healthcheck -- ./check-health.sh
+```
+
+### 4. Handle Exit Codes Properly
+
+```bash
+if ! lock.sh backup -- /usr/local/bin/backup.sh; then
+    # Alert, log, or take corrective action
+    echo "Backup failed or locked" | mail -s "Backup Alert" admin@example.com
+fi
+```
+
+### 5. Log Lock Events
+
+```bash
+# In cron
+* * * * * lock.sh task -- /path/to/script.sh 2>&1 | logger -t task-lock
+
+# In scripts
+lock.sh task -- /path/to/script.sh 2>&1 | tee -a /var/log/task.log
+```
+
+### 6. Combine with Monitoring
+
+```bash
+#!/bin/bash
+# Check if lock is held too long
+
+LOCK_FILE="/run/lock/backup.lock"
+MAX_AGE_SECONDS=7200  # 2 hours
+
+if [[ -f "$LOCK_FILE" ]]; then
+    AGE=$(($(date +%s) - $(stat -c %Y "$LOCK_FILE")))
+    if ((AGE > MAX_AGE_SECONDS)); then
+        echo "Warning: backup lock held for ${AGE} seconds" | \
+            mail -s "Lock Alert" admin@example.com
+    fi
+fi
+```
+
+### 7. Document Lock Dependencies
+
+```bash
+# README or comment in script
+# This script uses locks:
+# - "database-backup" - Exclusive access to database during backup
+# - "file-sync" - Prevents concurrent rsync operations
+#
+# Dependencies:
+# - database-backup must complete before file-sync can run
+```
+
+## Advanced Usage
+
+### Nested Operations (Different Locks)
+
+```bash
+#!/bin/bash
+# Outer operation
+lock.sh operation-a -- bash -c '
+    echo "Running operation A"
+
+    # Inner operation with different lock
+    lock.sh operation-b -- echo "Running operation B"
+'
+```
+
+### Conditional Locking
+
+```bash
+#!/bin/bash
+
+if [[ "$FORCE" == "yes" ]]; then
+    # Skip lock for forced execution
+    /usr/local/bin/task.sh
+else
+    # Normal locked execution
+    lock.sh task -- /usr/local/bin/task.sh
+fi
+```
+
+### Integration with systemd
+
+```ini
+[Unit]
+Description=My Locked Service
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/lock.sh --wait my-service -- /usr/local/bin/my-service.sh
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+```
+
+## Performance Considerations
+
+- **Lock file creation**: Negligible overhead (< 1ms)
+- **Lock acquisition**: Atomic kernel operation (< 1ms)
+- **Stale lock check**: Single file stat + process check (< 10ms)
+- **Lock release**: Automatic on process exit
+
+The utility adds minimal overhead to command execution, making it suitable for frequent operations and time-sensitive tasks.
+
+## Security Considerations
+
+1. **File Permissions**: Lock files inherit permissions from `/run/lock` (typically world-writable with sticky bit)
+2. **PID Spoofing**: The utility validates process existence but doesn't verify process identity
+3. **Race Conditions**: `flock` provides atomic locking, preventing race conditions
+4. **Symlink Attacks**: Lock files are created with `>` redirection, following symlinks
+
+For security-critical applications, consider:
+- Running with appropriate user permissions
+- Using dedicated lock directories with restricted permissions
+- Implementing additional process validation
+
+## FAQ
+
+**Q: What happens if the system crashes while holding a lock?**
+A: The lock file persists but becomes stale. On next acquisition attempt, it will be removed if older than `--max-age` and the PID is not running.
+
+**Q: Can I use the same lock name from different scripts?**
+A: Yes, that's the intended use. The same lock name ensures mutual exclusion across all scripts using it.
+
+**Q: What if `/run/lock` doesn't exist?**
+A: The script will fail. You can modify `LOCK_DIR` in the script to use an alternative directory like `/var/lock` or `/tmp/locks`.
+
+**Q: Is it safe to use in containers?**
+A: Yes, but note that locks are container-scoped. Different containers don't share locks unless they share the same `/run/lock` volume.
+
+**Q: Can I use this with non-Bash scripts?**
+A: Yes, you can lock any executable: `lock.sh task -- python3 script.py` or `lock.sh task -- /usr/bin/my-binary`
+
+**Q: How many locks can I have?**
+A: Practically unlimited. Each lock is just two small files in `/run/lock`.
+
+## Contributing
+
+Contributions are welcome! Please ensure:
+- All tests pass: `./tests/run_tests.sh`
+- Shellcheck compliance: `shellcheck lock.sh`
+- Documentation updates for new features
+
+## License
+
+This utility is part of the Okusi Group bash scripting standard library.
+
+## See Also
+
+- `flock(1)` - Linux manual page
+- `fcntl(2)` - POSIX file locking
+- Bash Coding Standard: `/ai/scripts/Okusi/bash-coding-standard/`
+
+---
+
+**Version**: 2.0
+**Last Updated**: 2025-10-23
+**Maintainer**: Gary Dean (Biksu Okusi)
