@@ -132,8 +132,8 @@ kill -TERM "$HOLDER_PID" 2>/dev/null || true
 wait "$HOLDER_PID" 2>/dev/null || true
 
 echo
-echo "Test: --timeout requires --wait"
-assert_exit_code "--timeout without --wait fails with exit code 2" 2 \
+echo "Test: --timeout works independently"
+assert_exit_code "--timeout without --wait succeeds" 0 \
   "$LOCK_SCRIPT" --timeout 10 test_wait_4 -- echo "test"
 
 echo

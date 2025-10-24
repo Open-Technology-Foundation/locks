@@ -14,22 +14,23 @@
 #
 # ARGUMENTS:
 #   LOCKNAME    Unique identifier for the lock (e.g., 'myapp', 'backup')
-#               If omitted, derived from basename of COMMAND
+#               If omitted, derived from directory-basename of COMMAND
 #   COMMAND     Command to execute while holding the lock
 #   ARGS        Optional arguments passed to COMMAND
 #
 # OPTIONS:
-#   --max-age HOURS     Maximum lock age before considered stale (default: 24)
-#   --wait              Wait for lock to become available (blocking mode)
-#   --timeout SECONDS   Maximum time to wait for lock (requires --wait)
-#   -h, --help          Display this help message
-#   -V, --version       Display version information
+#   -m, --max-age HOURS     Maximum lock age in hours (default: 24)
+#   -w, --wait              Wait indefinitely for lock to become available
+#   -t, --timeout SECONDS   Maximum time to wait for lock (implies --wait)
+#   -h, --help              Display this help message
+#   -V, --version           Display version information
 #
 # LOCKING MECHANISM:
 #   - Uses flock(1) on /run/lock/<LOCKNAME>.lock for exclusive locking
 #   - PID file at /run/lock/<LOCKNAME>.pid tracks lock holder
 #   - Non-blocking by default (fails immediately if lock is held)
-#   - With --wait: blocks until lock is available or timeout expires
+#   - With -w/--wait: blocks until lock is available
+#   - With -t/--timeout: waits up to specified seconds (implies --wait)
 #   - Stale lock detection: removes locks older than max-age with dead processes
 #
 # EXIT CODES:
@@ -49,10 +50,13 @@
 #   shlock --wait deployment -- ./deploy.sh production
 #
 #   # Wait up to 30 seconds for lock
-#   shlock --wait --timeout 30 sync -- rsync -av /src /dest
+#   shlock --timeout 30 sync -- rsync -av /src /dest
 #
 #   # Custom stale lock threshold
 #   shlock --max-age 12 critical -- /path/to/critical.sh
+#
+#   # Using short options
+#   shlock -t 60 -m 6 backup -- /usr/local/bin/backup.sh
 #
 # NOTES:
 #   - Lock files persist after command completion for reuse
@@ -64,8 +68,8 @@ set -euo pipefail
 shopt -s inherit_errexit shift_verbose
 
 # Script metadata
-declare -r SCRIPT_NAME=${0##*/}
 declare -r VERSION='1.0.0'
+declare -r SCRIPT_NAME=${0##*/}
 
 # Global variables
 declare -- LOCKNAME=''
@@ -76,7 +80,7 @@ declare -i WAIT_MODE=0
 declare -i TIMEOUT_SECONDS=0
 readonly -- LOCK_DIR=/run/lock
 
-# Messaging functions
+# Messaging functions -----------------
 error() { >&2 echo "$SCRIPT_NAME: error: $*"; }
 
 die() {
@@ -84,7 +88,12 @@ die() {
   exit "${1:-1}"
 }
 
-# Helper functions
+# Helper functions --------------------
+# Validate that $2 exists and is numeric, die with error if not
+arg2_num(){
+  ((${#@}-1<1)) || [[ ! "$2" =~ ^[0-9]+$ ]] && die 2 "${1@Q} requires a numeric argument" ||:
+}
+
 is_process_running() {
   local -i pid=$1
   kill -0 "$pid" 2>/dev/null
@@ -111,7 +120,7 @@ cleanup() {
   # flock is released when fd 200 closes; lock file persists for reuse
 }
 
-# Validation functions
+# Usage -------------------------------
 show_usage() {
   cat >&2 <<EOF
 Usage: $SCRIPT_NAME [OPTIONS] [LOCKNAME] -- COMMAND [ARGS...]
@@ -120,14 +129,16 @@ File-based locking system with stale lock detection.
 
 Arguments:
   LOCKNAME             Unique lock identifier (optional)
-                       If omitted, derived from basename of COMMAND
+                       If omitted, derived from directory-basename
+                       of COMMAND
+  --                   -- is *required* to signal the start of COMMAND
 
 Options:
-  --max-age HOURS      Maximum lock age in hours (default: 24)
-  --wait               Wait for lock to become available (blocking mode)
-  --timeout SECONDS    Maximum time to wait for lock (requires --wait)
-  -h, --help           Display this help message
-  -V, --version        Display version information
+  -m, --max-age HOURS      Maximum lock age in hours (default: $MAX_AGE_HOURS)
+  -w, --wait               Wait indefinitely for lock to become available
+  -t, --timeout SECONDS    Maximum time to wait for lock (implies --wait)
+  -h, --help               Display this help message
+  -V, --version            Display version information
 
 Exit codes:
   0   - Command executed successfully
@@ -146,16 +157,18 @@ Examples:
   $SCRIPT_NAME --wait deployment -- ./deploy.sh
 
   # Wait up to 30 seconds
-  $SCRIPT_NAME --wait --timeout 30 sync -- rsync -av /src /dest
+  $SCRIPT_NAME --timeout 30 sync -- rsync -av /src /dest
 
   # Custom stale lock threshold
   $SCRIPT_NAME --max-age 12 critical -- /path/to/critical.sh
+
+  # Using short options
+  $SCRIPT_NAME -t 60 -m 6 backup -- /usr/local/bin/backup.sh
 EOF
 }
 
-# Main function
+# Main ----------------------------------------------------------------------
 main() {
-  # Parse options
   while (($#)); do
     case $1 in
       -h|--help)
@@ -164,20 +177,16 @@ main() {
       -V|--version)
         echo "$SCRIPT_NAME $VERSION"; exit 0
         ;;
-      --max-age)
-        if [[ -z "${2:-}" ]] || [[ ! "$2" =~ ^[0-9]+$ ]]; then
-          die 2 "${1@Q} requires a numeric argument"
-        fi
+      -m|--max-age)
+        arg2_num "$@"
         shift
         MAX_AGE_HOURS=$1
         ;;
-      --wait)
+      -w|--wait)
         WAIT_MODE=1
         ;;
-      --timeout)
-        if [[ -z "${2:-}" ]] || [[ ! "$2" =~ ^[0-9]+$ ]]; then
-          die 2 "${1@Q} requires a numeric argument"
-        fi
+      -t|--timeout)
+        arg2_num "$@"
         shift
         TIMEOUT_SECONDS=$1
         ;;
@@ -185,6 +194,8 @@ main() {
         shift
         break
         ;;
+      # Note: Short options like -mwt are NOT supported (no deaggregation)
+      # Use separate flags: -m -w -t
       -*)
         die 2 "Unknown option ${1@Q}"
         ;;
@@ -202,18 +213,15 @@ main() {
   (($#)) || die 2 'COMMAND is required'
 
   if [[ -z "$LOCKNAME" ]]; then
-    LOCKNAME=$(basename -- "$(realpath -- "$1" || echo '')" || echo '')
+    # Auto-generate LOCKNAME from basename of COMMAND (if not provided)
+    # Exit with error if LOCKNAME derivation fails
+    LOCKNAME=$(basename -- "$(realpath -- "$1" || echo '')" 2>/dev/null || echo '')
     [[ -n $LOCKNAME ]] || die 2 "LOCKNAME could not be acquired from ${1@Q}"
   fi
 
-  # Validate timeout option
-  if ((TIMEOUT_SECONDS > 0)) && ((WAIT_MODE == 0)); then
-    die 2 '--timeout requires --wait'
-  fi
-
   # Setup lock file paths
-  LOCKFILE="$LOCK_DIR/$LOCKNAME.lock"
-  PIDFILE="$LOCK_DIR/$LOCKNAME.pid"
+  LOCKFILE="$LOCK_DIR"/"$LOCKNAME".lock
+  PIDFILE="$LOCK_DIR"/"$LOCKNAME".pid
 
   # Check if lock file exists and is stale
   if [[ -f "$LOCKFILE" ]]; then
@@ -235,14 +243,14 @@ main() {
   # Open file descriptor 200 for the lock file
   exec 200>"$LOCKFILE"
 
-  # Determine flock options based on wait mode
+  # Determine flock options based on timeout and wait mode
   local -a flock_opts=()
-  if ((WAIT_MODE)); then
-    # Blocking mode
-    if ((TIMEOUT_SECONDS > 0)); then
-      flock_opts=(-w "$TIMEOUT_SECONDS")
-    fi
-    # else: wait indefinitely (no options needed)
+  if ((TIMEOUT_SECONDS > 0)); then
+    # Timeout mode: wait up to specified seconds
+    flock_opts=(-w "$TIMEOUT_SECONDS")
+  elif ((WAIT_MODE)); then
+    # Wait indefinitely (no options needed for flock)
+    :
   else
     # Non-blocking mode (default)
     flock_opts=(-n)

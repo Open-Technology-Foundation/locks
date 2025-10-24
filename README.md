@@ -32,15 +32,169 @@ A robust, production-ready file-based locking utility using `flock(1)` for safe 
 
 ## Installation
 
-1. Copy `shlock` to your desired location:
+### Complete Installation (Recommended)
+
+Install the script, manpage, and bash completion using either the Makefile or installation script.
+
+#### Using Makefile
+
 ```bash
-cp shlock /usr/local/bin/
-chmod +x /usr/local/bin/shlock
+# Install to /usr/local (default) - may require sudo
+make install
+
+# Install to /usr - requires sudo
+sudo make PREFIX=/usr install
+
+# Install to user directory (no sudo needed)
+make PREFIX=~/.local install
+
+# Uninstall
+make uninstall
 ```
 
-2. Or use directly from the repository:
+#### Using install.sh Script
+
+```bash
+# Install to /usr/local (default) - may require sudo
+./install.sh install
+
+# Install to /usr - requires sudo
+sudo ./install.sh --prefix /usr install
+
+# Install to user directory (no sudo needed)
+./install.sh --prefix ~/.local install
+
+# Skip confirmation prompts
+./install.sh -y install
+
+# Uninstall
+./install.sh uninstall
+```
+
+### Partial Installation
+
+Install only specific components:
+
+#### Install Script Only
+
+```bash
+# Using Makefile
+make install-script
+
+# Using install.sh
+./install.sh install-script
+```
+
+#### Install Manpage Only
+
+```bash
+# Using Makefile
+make install-man
+
+# Using install.sh
+./install.sh install-man
+```
+
+#### Install Bash Completion Only
+
+```bash
+# Using Makefile
+make install-completion
+
+# Using install.sh
+./install.sh install-completion
+```
+
+### Manual Installation
+
+If you prefer manual installation:
+
+```bash
+# Copy script
+sudo cp shlock /usr/local/bin/
+sudo chmod +x /usr/local/bin/shlock
+
+# Build and install manpage (requires pandoc)
+pandoc --standalone --to man -o shlock.1 shlock.1.md
+sudo cp shlock.1 /usr/local/share/man/man1/
+sudo mandb -q
+
+# Install bash completion
+sudo cp shlock.bash_completion /usr/share/bash-completion/completions/shlock
+```
+
+### Direct Usage (No Installation)
+
+Use directly from the repository without installing:
+
 ```bash
 /ai/scripts/lib/shlock/shlock [OPTIONS] [LOCKNAME] -- COMMAND [ARGS...]
+```
+
+### Installation Requirements
+
+**Script requirements:**
+- Bash 5.0 or later
+- `flock` utility (usually from `util-linux` package)
+- `/run/lock` directory (standard on most Linux distributions)
+
+**Manpage build requirements** (optional, only needed for `make install-man`):
+- **pandoc** - Document converter
+
+Install pandoc:
+```bash
+# Debian/Ubuntu
+sudo apt install pandoc
+
+# Fedora/RHEL
+sudo dnf install pandoc
+
+# macOS
+brew install pandoc
+```
+
+### Bash Completion
+
+Bash completion is automatically installed with `make install` or `./install.sh install`. It provides intelligent tab-completion for:
+
+- **Options**: `-m`, `-w`, `-t`, `--max-age`, `--wait`, `--timeout`, `--help`, `--version`
+- **Lock names**: Existing locks from `/run/lock/*.lock`
+- **Commands**: After `--`, completes available commands and files
+
+**Manual activation** (if not using system-wide installation):
+
+```bash
+# Source completion for current shell
+source shlock.bash_completion
+
+# Or add to ~/.bashrc for permanent activation
+echo 'source /path/to/shlock.bash_completion' >> ~/.bashrc
+```
+
+**Usage examples:**
+```bash
+shlock --<TAB>         # Shows: --help --max-age --timeout --version --wait
+shlock -m <TAB>        # Suggests hours values
+shlock -t <TAB>        # Suggests seconds values
+shlock backup<TAB>     # Shows existing lock names starting with 'backup'
+shlock mylock -- <TAB> # Completes available commands
+```
+
+### Custom Prefix Configuration
+
+If installing to a custom prefix (e.g., `~/.local`), add to your `~/.bashrc` or `~/.profile`:
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+export MANPATH="$HOME/.local/share/man:$MANPATH"
+
+# Bash completion directory (if needed)
+export BASH_COMPLETION_USER_DIR="$HOME/.local/share/bash-completion"
+```
+
+After installation to a custom prefix, restart your shell or run:
+```bash
+source ~/.bashrc
 ```
 
 ### Renaming the Script
@@ -57,12 +211,6 @@ sherlock backup -- /usr/local/bin/backup.sh
 ```
 
 The script name is not referenced internally, so renaming has no effect on its operation.
-
-### Requirements
-
-- Bash 5.0 or later
-- `flock` utility (usually from `util-linux` package)
-- `/run/lock` directory (standard on most Linux distributions)
 
 ## Usage
 
@@ -85,8 +233,8 @@ shlock [OPTIONS] [LOCKNAME] -- COMMAND [ARGS...]
 | Option | Argument | Description |
 |--------|----------|-------------|
 | `--max-age` | HOURS | Maximum lock age before considered stale (default: 24) |
-| `--wait` | - | Wait for lock to become available (blocking mode) |
-| `--timeout` | SECONDS | Maximum time to wait for lock (requires `--wait`) |
+| `--wait` | - | Wait indefinitely for lock to become available |
+| `--timeout` | SECONDS | Maximum time to wait for lock (implies `--wait`) |
 | `-h, --help` | - | Display help message |
 | `-V, --version` | - | Display version information |
 
@@ -137,13 +285,13 @@ Wait up to a specified time:
 
 ```bash
 # Wait up to 30 seconds
-shlock --wait --timeout 30 sync -- rsync -av /src /dest
+shlock --timeout 30 sync -- rsync -av /src /dest
 
 # Wait up to 5 minutes (300 seconds)
-shlock --wait --timeout 300 report -- /usr/local/bin/generate-report.sh
+shlock --timeout 300 report -- /usr/local/bin/generate-report.sh
 
 # Critical task with short timeout
-shlock --wait --timeout 10 healthcheck -- curl -f http://localhost/health
+shlock --timeout 10 healthcheck -- curl -f http://localhost/health
 ```
 
 ### Cron Job Usage
@@ -158,7 +306,7 @@ Prevent overlapping executions:
 */5 * * * * /usr/local/bin/shlock -- /usr/local/bin/backup.sh 2>&1 | logger -t backup
 
 # With timeout for long-running tasks
-0 2 * * * /usr/local/bin/shlock --wait --timeout 3600 nightly-job -- /usr/local/bin/nightly.sh
+0 2 * * * /usr/local/bin/shlock --timeout 3600 nightly-job -- /usr/local/bin/nightly.sh
 ```
 
 ### Systemd Service
@@ -244,7 +392,7 @@ If a lock is stale but the process is still running, the lock acquisition fails 
 - Acquires lock as soon as it's released
 - Best for: Sequential tasks that must eventually run
 
-**Timeout (`--wait --timeout SECONDS`)**:
+**Timeout (`--timeout SECONDS`)**:
 - Waits up to specified seconds for lock
 - Fails with exit code 1 if timeout expires
 - Best for: Tasks with time constraints
@@ -288,7 +436,7 @@ shlock indexing -- /usr/local/bin/rebuild-search-index.sh
 
 ```bash
 # Prevent multiple restart attempts
-shlock --wait --timeout 30 service-restart -- systemctl restart myservice
+shlock --timeout 30 service-restart -- systemctl restart myservice
 ```
 
 ## Testing
@@ -353,9 +501,9 @@ ls -ld /run/lock
 **Symptom**: `--timeout` flag not recognized or failing
 
 **Check**:
-1. Ensure you're using `--wait` with `--timeout`
-2. Verify `flock` supports `-w` option: `flock --help | grep -e '-w'`
-3. Update util-linux if needed: `apt-get update && apt-get install util-linux`
+1. Verify `flock` supports `-w` option: `flock --help | grep -e '-w'`
+2. Update util-linux if needed: `apt-get update && apt-get install util-linux`
+3. Ensure timeout value is numeric and positive
 
 ### Lock Always Considered Stale
 
@@ -406,10 +554,10 @@ shlock --max-age 48 monthly-report -- ...
 
 ```bash
 # Don't let deployments wait forever
-shlock --wait --timeout 300 deployment -- ./deploy.sh
+shlock --timeout 300 deployment -- ./deploy.sh
 
 # Quick healthchecks should timeout fast
-shlock --wait --timeout 5 healthcheck -- ./check-health.sh
+shlock --timeout 5 healthcheck -- ./check-health.sh
 ```
 
 ### 4. Handle Exit Codes Properly
