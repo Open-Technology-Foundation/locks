@@ -90,7 +90,9 @@ die() {
 # Helper functions --------------------
 # Validate that $2 exists and is numeric, die with error if not
 arg2_num(){
-  ((${#@}-1<1)) || [[ ! "$2" =~ ^[0-9]+$ ]] && die 2 "${1@Q} requires a numeric argument" ||:
+  if ((${#@}-1<1)) || [[ ! "$2" =~ ^[0-9]+$ ]]; then
+    die 2 "${1@Q} requires a numeric argument"
+  fi
 }
 
 # Determine lock directory with fallback
