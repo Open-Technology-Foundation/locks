@@ -357,20 +357,30 @@ fi
 ### Locking Mechanism
 
 1. **LOCKNAME Resolution**: If LOCKNAME is omitted, derives it from the basename of COMMAND
-2. **Lock File Creation**: Creates a lock file at `/run/lock/<LOCKNAME>.lock`
-3. **Stale Lock Check**: If lock file exists, checks if it's older than `--max-age` hours
-4. **Process Validation**: Verifies if the process that created the lock is still running
-5. **Lock Acquisition**: Uses `flock(1)` for atomic, kernel-level locking
-6. **PID Tracking**: Writes the script's PID to `/run/lock/<LOCKNAME>.pid`
-7. **Command Execution**: Runs the specified command while holding the lock
-8. **Cleanup**: Automatically removes PID file on exit; lock file persists for reuse
+2. **Lock Directory Determination**: Automatically selects lock directory:
+   - Tries `/run/lock` (standard tmpfs location)
+   - Falls back to `/var/lock` if `/run/lock` unavailable
+   - Falls back to `/tmp/locks` (created if needed)
+   - Fails if no directory is writable
+3. **Lock File Creation**: Creates a lock file at `<LOCK_DIR>/<LOCKNAME>.lock`
+4. **Stale Lock Check**: If lock file exists, checks if it's older than `--max-age` hours
+5. **Process Validation**: Verifies if the process that created the lock is still running
+6. **Lock Acquisition**: Uses `flock(1)` for atomic, kernel-level locking
+7. **PID Tracking**: Writes the script's PID to `<LOCK_DIR>/<LOCKNAME>.pid`
+8. **Command Execution**: Runs the specified command while holding the lock
+9. **Cleanup**: Automatically removes PID file on exit; lock file persists for reuse
 
 ### File Locations
 
-- **Lock files**: `/run/lock/<LOCKNAME>.lock`
-- **PID files**: `/run/lock/<LOCKNAME>.pid`
+Lock files are stored in the first writable directory from this list:
 
-Both are stored in `/run/lock` which is typically a tmpfs (RAM-based) filesystem that's cleared on reboot.
+1. **`/run/lock/`** (preferred) - tmpfs filesystem, cleared on reboot
+2. **`/var/lock/`** (fallback) - persistent across reboots on most systems
+3. **`/tmp/locks/`** (last resort) - created automatically if needed, cleared on reboot
+
+File patterns:
+- **Lock files**: `<LOCK_DIR>/<LOCKNAME>.lock`
+- **PID files**: `<LOCK_DIR>/<LOCKNAME>.pid`
 
 ### Stale Lock Detection
 
@@ -685,7 +695,7 @@ A: The lock file persists but becomes stale. On next acquisition attempt, it wil
 A: Yes, that's the intended use. The same lock name ensures mutual exclusion across all scripts using it.
 
 **Q: What if `/run/lock` doesn't exist?**
-A: The script will fail. You can modify `LOCK_DIR` in the script to use an alternative directory like `/var/lock` or `/tmp/locks`.
+A: shlock automatically falls back through multiple directories: `/run/lock` → `/var/lock` → `/tmp/locks` (created if needed). If none are writable, the script fails with an error message.
 
 **Q: Is it safe to use in containers?**
 A: Yes, but note that locks are container-scoped. Different containers don't share locks unless they share the same `/run/lock` volume.

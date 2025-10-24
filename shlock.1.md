@@ -367,22 +367,37 @@ deploy:
 
 # FILES
 
-**/run/lock/<LOCKNAME>.lock**
+**<LOCK_DIR>/<LOCKNAME>.lock**
 :   Lock file used for **flock**(1) operations. Persists (empty) after use for reuse.
-    Located in tmpfs, automatically cleared on reboot.
+    The location of <LOCK_DIR> is automatically determined (see Lock Directory Selection below).
 
-**/run/lock/<LOCKNAME>.pid**
+**<LOCK_DIR>/<LOCKNAME>.pid**
 :   PID file containing process ID of lock holder. Removed by EXIT trap.
     Used for informational error messages and stale lock validation.
 
+## Lock Directory Selection
+
+**shlock** automatically selects the first writable directory from this list:
+
 **/run/lock/**
 :   Standard Linux lock directory (tmpfs). World-writable with sticky bit set.
-    Automatically managed by **systemd-tmpfiles**(8).
+    Automatically managed by **systemd-tmpfiles**(8). Cleared on reboot.
+    **This is the preferred location.**
+
+**/var/lock/**
+:   Traditional lock directory. May persist across reboots on some systems.
+    Used as fallback if `/run/lock` is unavailable or not writable.
+
+**/tmp/locks/**
+:   Last resort directory. Automatically created if it doesn't exist.
+    Usually cleared on reboot. Only used if both above directories are unavailable.
+
+If none of these directories are writable, **shlock** exits with error code 1.
 
 # NOTES
 
 - Lock names should be unique within your system to prevent unintended conflicts.
-- The **/run/lock/** directory is on tmpfs and cleared on reboot, automatically removing all locks.
+- Lock directories on tmpfs are cleared on reboot, automatically removing all locks.
 - Locks are automatically released when the process terminates (normal exit, signal, or crash).
 - For very long-running commands, consider adjusting **--max-age** to prevent premature stale lock detection.
 - PID reuse is possible but extremely rare; stale lock detection validates process identity.

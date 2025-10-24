@@ -63,22 +63,33 @@ _shlock()
       ;;
   esac
 
-  # Before --, complete with existing lock names from /run/lock or --
+  # Before --, complete with existing lock names from lock directories or --
   if ((dashdash_pos == 0)); then
     local locks=()
 
-    # Get existing lock names from /run/lock/*.lock files
-    if [[ -d /run/lock ]]; then
+    # Get existing lock names - check multiple directories
+    local lock_dir
+    for lock_dir in /run/lock /var/lock /tmp/locks; do
+      [[ -d "$lock_dir" ]] || continue
       local lockfile
       shopt -s nullglob
-      for lockfile in /run/lock/*.lock; do
+      for lockfile in "$lock_dir"/*.lock; do
         [[ -f "$lockfile" ]] || continue
         local lockname="${lockfile##*/}"
         lockname="${lockname%.lock}"
-        locks+=("$lockname")
+        # Avoid duplicates from different directories
+        local existing
+        local -i found=0
+        for existing in "${locks[@]}"; do
+          if [[ "$existing" == "$lockname" ]]; then
+            found=1
+            break
+          fi
+        done
+        ((found)) || locks+=("$lockname")
       done
       shopt -u nullglob
-    fi
+    done
 
     # Add -- separator as an option
     locks+=("--")

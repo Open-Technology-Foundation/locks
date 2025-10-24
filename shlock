@@ -78,7 +78,6 @@ declare -- PIDFILE=''
 declare -i MAX_AGE_HOURS=24
 declare -i WAIT_MODE=0
 declare -i TIMEOUT_SECONDS=0
-readonly -- LOCK_DIR=/run/lock
 
 # Messaging functions -----------------
 error() { >&2 echo "$SCRIPT_NAME: error: $*"; }
@@ -92,6 +91,35 @@ die() {
 # Validate that $2 exists and is numeric, die with error if not
 arg2_num(){
   ((${#@}-1<1)) || [[ ! "$2" =~ ^[0-9]+$ ]] && die 2 "${1@Q} requires a numeric argument" ||:
+}
+
+# Determine lock directory with fallback
+# Tries /run/lock, then /var/lock, then creates /tmp/locks, or fails
+determine_lock_dir() {
+  local -a lock_dirs=('/run/lock' '/var/lock')
+  local -- dir
+
+  # Try standard directories first
+  for dir in "${lock_dirs[@]}"; do
+    if [[ -d "$dir" && -w "$dir" ]]; then
+      echo "$dir"
+      return 0
+    fi
+  done
+
+  # Fall back to /tmp/locks - create if needed
+  dir='/tmp/locks'
+  if [[ ! -d "$dir" ]]; then
+    mkdir -p "$dir" 2>/dev/null || return 1
+  fi
+
+  if [[ -w "$dir" ]]; then
+    echo "$dir"
+    return 0
+  fi
+
+  # All options exhausted
+  return 1
 }
 
 is_process_running() {
@@ -218,6 +246,11 @@ main() {
     LOCKNAME=$(basename -- "$(realpath -- "$1" || echo '')" 2>/dev/null || echo '')
     [[ -n $LOCKNAME ]] || die 2 "LOCKNAME could not be acquired from ${1@Q}"
   fi
+
+  # Determine lock directory with fallback
+  declare -- LOCK_DIR
+  LOCK_DIR=$(determine_lock_dir) || die 1 "Cannot find or create writable lock directory"
+  readonly -- LOCK_DIR
 
   # Setup lock file paths
   LOCKFILE="$LOCK_DIR"/"$LOCKNAME".lock
